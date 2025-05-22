@@ -10,13 +10,13 @@ st.sidebar.title("Tongue Weight Calculator")
 
 # Load inputs
 st.sidebar.header("Load Info")
-load_weight = st.sidebar.number_input("Load Weight (lbs / kg)", value=1000.0)
-load_position = st.sidebar.number_input("Load Position from Hitch (in / mm)", value=100.0)
+load_weight = st.sidebar.number_input("Load Weight (lbs / kg)", value=11305.0)
+load_position = st.sidebar.number_input("Load Position from Hitch (in / mm)", value=139.0)
 
 # Optional trailer weight
 st.sidebar.header("Optional Trailer Info")
-trailer_weight = st.sidebar.number_input("Trailer Weight (lbs / kg)", value=0.0)
-trailer_cog = st.sidebar.number_input("Trailer Center of Gravity (in / mm)", value=0.0)
+trailer_weight = st.sidebar.number_input("Trailer Weight (lbs / kg)", value=1500.0)
+trailer_cog = st.sidebar.number_input("Trailer Center of Gravity (in / mm)", value=130.0)
 
 # Axle inputs
 st.sidebar.header("Axle Positions")
@@ -26,7 +26,7 @@ for i in range(num_axles):
     pos = st.sidebar.number_input(f"Axle {i+1} Position from Hitch (in / mm)", value=100.0 + i * 40)
     axle_positions.append(pos)
 
-# Combine all loads
+# === SETUP SYSTEM OF EQUATIONS ===
 positions = [load_position]
 weights = [load_weight]
 labels = ["Load"]
@@ -36,58 +36,58 @@ if trailer_weight > 0:
     weights.append(trailer_weight)
     labels.append("Trailer")
 
-# Convert to numpy arrays
 positions = np.array(positions)
 weights = np.array(weights)
+total_weight = np.sum(weights)
 
-# Force/moment equations: solve for reactions at axles
-A = np.zeros((2, num_axles))
+# Matrix setup
+# Unknowns: [Tongue, Axle1, Axle2, Axle3]
+n = num_axles + 1
+A = np.zeros((2, n))  # 2 equations (force and moment)
 b = np.zeros(2)
 
-# Total vertical load balance
-A[0, :] = 1
-b[0] = np.sum(weights)
+# Force balance
+A[0, 0] = 1  # Tongue
+A[0, 1:] = 1  # All axles
+b[0] = total_weight
 
-# Moment balance around hitch
-for i in range(num_axles):
-    A[1, i] = axle_positions[i]
+# Moment balance (about hitch)
+A[1, 0] = 0  # Tongue moment = 0
+for i, pos in enumerate(axle_positions):
+    A[1, i + 1] = pos  # Axle moments
 b[1] = np.sum(positions * weights)
 
-# Solve for axle loads
-axle_loads = np.linalg.lstsq(A.T, b, rcond=None)[0]
+# Solve system
+solution = np.linalg.solve(A, b)
+tongue_weight = solution[0]
+axle_loads = solution[1:]
 
-# Compute tongue weight
-total_weight = np.sum(weights)
-total_moment = np.sum(positions * weights)
-tongue_weight = total_weight - np.sum(axle_loads)
-
+# Tongue weight percentage
 tongue_percent = tongue_weight / total_weight * 100 if total_weight > 0 else 0
 
 # Layout
 col1, col2 = st.columns([3, 2])
 
-# Plot 1: Positions and weights
+# === PLOT 1 ===
 with col1:
     fig, ax = plt.subplots(figsize=(10, 3))
     ax.set_title("Load Distribution")
     ax.set_xlabel("Distance from Hitch (in)")
     ax.set_yticks([])
-    
-    # Plot points
+
     for i, (pos, w, label) in enumerate(zip(positions, weights, labels)):
         ax.plot(pos, 0, 'o', label=f"{label}: {w:.1f} lbs")
         ax.annotate(f"{label}\n{w:.1f} lbs", (pos, 0), textcoords="offset points", xytext=(0, 10), ha='center')
 
-    # Plot axles
     for i, pos in enumerate(axle_positions):
-        ax.plot(pos, 0, 's', label=f"Axle {i+1}: {axle_loads[i]:.1f} lbs", color=f"C{i+2}")
+        ax.plot(pos, 0, 's', color=f"C{i+2}", label=f"Axle {i+1}: {axle_loads[i]:.1f} lbs")
         ax.annotate(f"Axle {i+1}\n{axle_loads[i]:.1f} lbs", (pos, 0), textcoords="offset points", xytext=(0, -25), ha='center')
 
     ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.6), ncol=3)
     ax.grid(True)
     st.pyplot(fig)
 
-# Plot 2: Axle load bar chart
+# === PLOT 2 ===
 with col2:
     fig2, ax2 = plt.subplots(figsize=(4, 3))
     ax2.barh([f"Axle {i+1}" for i in range(num_axles)], axle_loads, color='skyblue')
@@ -95,7 +95,7 @@ with col2:
     ax2.set_title("Axle Load Distribution")
     st.pyplot(fig2)
 
-# Tongue weight results
+# === RESULTS ===
 st.subheader("Tongue Weight Results")
 st.markdown(f"**Total Weight:** {total_weight:.1f} lbs")
 st.markdown(f"**Tongue Weight:** {tongue_weight:.1f} lbs")
@@ -108,7 +108,7 @@ elif tongue_percent > 15:
 else:
     st.success("Tongue weight is within acceptable range (10%-15%).")
 
-# PDF export
+# === PDF Export ===
 st.subheader("Export Results")
 if st.button("Generate PDF Report"):
     pdf_buffer = io.BytesIO()
