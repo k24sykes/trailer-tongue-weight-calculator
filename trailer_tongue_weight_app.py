@@ -5,72 +5,72 @@ from fpdf import FPDF
 import tempfile
 import os
 
-# --- Page config ---
+# --- Page Config ---
 st.set_page_config(layout="wide")
-st.sidebar.title("Trailer Load Inputs")
+st.title("Trailer Tongue Weight Calculator")
 
 # --- Sidebar Inputs ---
+st.sidebar.title("Trailer Configuration")
 trailer_length = st.sidebar.number_input("Trailer Length from Hitch (in)", value=214)
-num_axles = st.sidebar.selectbox("Number of Axles", [1, 2], index=1)
 
+num_axles = st.sidebar.selectbox("Number of Axles", [1, 2], index=1)
 axle_positions = []
 for i in range(num_axles):
-    pos = st.sidebar.number_input(f"Axle {i+1} Position from Hitch (in)", value=134 + 36 * i)
+    pos = st.sidebar.number_input(f"Axle {i+1} Position (in from hitch)", value=134 + i*36)
     axle_positions.append(pos)
 
-# Payload inputs
-load_weight = st.sidebar.number_input("Payload Weight (lbs)", value=11305)
-load_cg = st.sidebar.number_input("Payload CG from Hitch (in)", value=139)
+st.sidebar.markdown("---")
 
-# Optional trailer base weight and CG
-include_trailer = st.sidebar.checkbox("Include Trailer Weight & CG", value=True)
-trailer_weight = trailer_cg = 0
-if include_trailer:
-    trailer_weight = st.sidebar.number_input("Trailer Weight (lbs)", value=3500)
-    trailer_cg = st.sidebar.number_input("Trailer CG from Hitch (in)", value=90)
+# --- Load Inputs ---
+st.sidebar.title("Load Configuration")
 
-# --- Tongue and Axle Load Calculation ---
-def compute_tongue_and_axle_loads(load_weight, load_cg, trailer_weight, trailer_cg, axle_positions):
-    W1 = load_weight
-    x1 = load_cg
-    W2 = trailer_weight
-    x2 = trailer_cg
+use_single_load = st.sidebar.checkbox("Use Single Load Input", value=True)
 
-    total_weight = W1 + W2
-    if total_weight == 0:
-        return 0.0, [], 0.0, 0.0
+loads = []
 
-    total_moment = W1 * x1 + W2 * x2
-    total_cg = total_moment / total_weight
+if use_single_load:
+    weight = st.sidebar.number_input("Total Trailer Load (lbs)", value=11305)
+    cg = st.sidebar.number_input("Center of Gravity from Hitch (in)", value=139)
+    loads.append((weight, cg))
+else:
+    num_loads = st.sidebar.number_input("Number of Load Points", min_value=1, value=1, step=1)
+    for i in range(num_loads):
+        weight = st.sidebar.number_input(f"Load {i+1} Weight (lbs)", value=1000, key=f"w_{i}")
+        pos = st.sidebar.number_input(f"Load {i+1} Position (in from hitch)", value=100, key=f"x_{i}")
+        loads.append((weight, pos))
+
+# --- Equilibrium Calculation ---
+def solve_reactions(loads, axle_positions):
+    total_load = sum(w for w, _ in loads)
+    total_moment = sum(w * x for w, x in loads)
 
     if len(axle_positions) == 1:
-        x = axle_positions[0]
-        axle_load = total_weight * total_cg / x
-        tongue_weight = total_weight - axle_load
-        return tongue_weight, [axle_load], total_weight, total_cg
-
+        x1 = axle_positions[0]
+        R1 = total_moment / x1  # Axle reaction
+        RH = total_load - R1
+        return RH, [R1]
+    
     elif len(axle_positions) == 2:
-        x1_axle, x2_axle = axle_positions
+        x1, x2 = axle_positions
         A = np.array([
             [1, 1],
-            [x1_axle, x2_axle]
+            [x1, x2]
         ])
         b = np.array([
-            total_weight,
-            total_weight * total_cg
+            total_load,
+            total_moment
         ])
-        axle_loads = np.linalg.solve(A, b)
-        tongue_weight = total_weight - np.sum(axle_loads)
-        return tongue_weight, axle_loads.tolist(), total_weight, total_cg
-
-    else:
-        return 0.0, [], total_weight, total_cg
+        try:
+            R = np.linalg.solve(A, b)
+            R1, R2 = R
+            RH = total_load - R1 - R2
+            return RH, [R1, R2]
+        except np.linalg.LinAlgError:
+            return 0, [0] * len(axle_positions)
 
 # --- Run Calculation ---
-tongue_weight, axle_loads, total_weight, total_cg = compute_tongue_and_axle_loads(
-    load_weight, load_cg, trailer_weight, trailer_cg, axle_positions
-)
-
+tongue_weight, axle_loads = solve_reactions(loads, axle_positions)
+total_weight = sum(w for w, _ in loads)
 tongue_pct = 100 * tongue_weight / total_weight if total_weight else 0
 
 # --- Warnings ---
@@ -95,64 +95,61 @@ with col1:
 
     # Hitch
     ax.axvline(0, color='black', linestyle='--', label="Hitch")
+    ax.text(0, 0.6, f"Hitch\n{tongue_weight:.0f} lbs", ha="center", fontsize=8)
 
-    # Payload CG
-    ax.plot(load_cg, 0.2, "go")
-    ax.text(load_cg, 0.35, f"Payload\n{load_weight} lbs", ha="center", fontsize=8)
-
-    # Trailer CG (if used)
-    if include_trailer and trailer_weight > 0:
-        ax.plot(trailer_cg, -0.2, "ro")
-        ax.text(trailer_cg, -0.35, f"Trailer\n{trailer_weight} lbs", ha="center", fontsize=8)
+    # Loads
+    for i, (w, x) in enumerate(loads):
+        ax.plot(x, 0, "go")
+        ax.text(x, 0.2, f"{w} lbs\nLoad {i+1}", ha="center", fontsize=8)
 
     # Axles
     for i, x in enumerate(axle_positions):
         ax.axvline(x, color="blue", linestyle=":")
-        if i < len(axle_loads):
-            ax.text(x, -0.6, f"Axle {i+1}\n{axle_loads[i]:.0f} lbs", ha="center", fontsize=8)
-        else:
-            ax.text(x, -0.6, f"Axle {i+1}", ha="center", fontsize=8)
+        ax.text(x, -0.3, f"Axle {i+1}\n{axle_loads[i]:.0f} lbs", ha="center", fontsize=8)
 
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.8), ncol=3)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.4), ncol=3)
     st.pyplot(fig)
 
 with col2:
     st.subheader("Results")
     st.metric("Total Load", f"{total_weight:.1f} lbs")
     st.metric("Tongue Weight", f"{tongue_weight:.1f} lbs ({tongue_pct:.1f}%)")
-    st.metric("Combined CG", f"{total_cg:.1f} in")
     if axle_loads:
         st.markdown("### Axle Loads")
         for i, load in enumerate(axle_loads):
             st.write(f"Axle {i+1}: **{load:.1f} lbs**")
 
-# --- Export to PDF ---
-if st.button("Export to PDF"):
+# --- Export PDF ---
+st.markdown("---")
+if st.button("Export as PDF"):
     with tempfile.TemporaryDirectory() as tmpdir:
-        plot_path = os.path.join(tmpdir, "plot.png")
-        pdf_path = os.path.join(tmpdir, "report.pdf")
-
-        # Save the plot image
-        fig.savefig(plot_path, bbox_inches='tight')
+        # Save the plot
+        img_path = os.path.join(tmpdir, "plot.png")
+        fig.savefig(img_path, bbox_inches="tight")
 
         # Create PDF
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=12)
-        pdf.cell(200, 10, txt="Trailer Load Report", ln=True, align='C')
-        pdf.ln(10)
-        pdf.cell(200, 10, txt=f"Total Load: {total_weight:.1f} lbs", ln=True)
-        pdf.cell(200, 10, txt=f"Tongue Weight: {tongue_weight:.1f} lbs ({tongue_pct:.1f}%)", ln=True)
-        pdf.cell(200, 10, txt=f"Combined CG: {total_cg:.1f} in from hitch", ln=True)
+
+        pdf.cell(200, 10, "Trailer Tongue Weight Report", ln=True, align="C")
         pdf.ln(5)
+        pdf.cell(200, 10, f"Total Load: {total_weight:.1f} lbs", ln=True)
+        pdf.cell(200, 10, f"Tongue Weight: {tongue_weight:.1f} lbs ({tongue_pct:.1f}%)", ln=True)
 
-        for i, x in enumerate(axle_positions):
-            txt = f"Axle {i+1} at {x} in — Load: {axle_loads[i]:.1f} lbs" if i < len(axle_loads) else f"Axle {i+1} at {x} in"
-            pdf.cell(200, 10, txt=txt, ln=True)
+        for i, load in enumerate(axle_loads):
+            pdf.cell(200, 10, f"Axle {i+1} Load: {load:.1f} lbs", ln=True)
 
-        pdf.ln(10)
-        pdf.image(plot_path, x=10, w=190)
-        pdf.output(pdf_path)
+        pdf.ln(5)
+        pdf.image(img_path, w=180)
 
-        with open(pdf_path, "rb") as f:
-            st.download_button("Download PDF Report", f, file_name="trailer_load_report.pdf")
+        pdf_output_path = os.path.join(tmpdir, "tongue_weight_report.pdf")
+        pdf.output(pdf_output_path)
+
+        with open(pdf_output_path, "rb") as f:
+            st.download_button(
+                label="Download PDF Report",
+                data=f,
+                file_name="tongue_weight_report.pdf",
+                mime="application/pdf"
+            )
