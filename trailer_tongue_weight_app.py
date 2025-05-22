@@ -1,124 +1,156 @@
 import streamlit as st
 import matplotlib.pyplot as plt
-import numpy as np
 from fpdf import FPDF
-import tempfile
-import os
+import io
 
-# --- Page config ---
-st.set_page_config(layout="wide", page_title="Trailer Tongue Weight Calculator")
-st.title("🚛 Trailer Tongue Weight Calculator")
+st.set_page_config(layout="wide")
+st.title("Trailer Tongue Weight Calculator (Simplified Model)")
 
-# --- Sidebar Inputs ---
-st.sidebar.header("Trailer Parameters")
+st.sidebar.header("Inputs")
+
+# Inputs
 trailer_length = st.sidebar.number_input("Trailer Length from Hitch (in)", value=214)
+num_axles = st.sidebar.selectbox("Number of Axles", [1, 2], index=1)
 
-# Axle inputs (simplified to virtual midpoint)
-axle1 = st.sidebar.number_input("Front Axle Position from Hitch (in)", value=134)
-axle2 = st.sidebar.number_input("Rear Axle Position from Hitch (in)", value=170)
+axle_positions = []
+for i in range(num_axles):
+    default_pos = 134 + 36 * i
+    pos = st.sidebar.number_input(f"Axle {i+1} Position from Hitch (in)", value=default_pos)
+    axle_positions.append(pos)
 
-# Virtual axle midpoint
-virtual_axle = (axle1 + axle2) / 2
-
-# Load inputs
-st.sidebar.header("Load Parameters")
 load_weight = st.sidebar.number_input("Load Weight (lbs)", value=11305)
 load_cg = st.sidebar.number_input("Load CG from Hitch (in)", value=139)
 
-# Optional trailer frame weight
-st.sidebar.header("Optional Trailer Weight")
 trailer_frame_weight = st.sidebar.number_input("Trailer Frame Weight (lbs)", value=0)
 trailer_frame_cg = st.sidebar.number_input("Trailer Frame CG from Hitch (in)", value=0)
 
-# --- Combine loads ---
-total_weight = load_weight + trailer_frame_weight
-total_moment = (load_weight * load_cg) + (trailer_frame_weight * trailer_frame_cg)
-distance_axle_to_hitch = virtual_axle
+st.sidebar.markdown("""
+**Assumptions:**
 
-# --- Tongue weight calculation ---
-if distance_axle_to_hitch != 0:
-    tongue_force = total_moment / distance_axle_to_hitch
-else:
-    tongue_force = 0.0
-
-tongue_force = round(tongue_force, 2)
-
-# --- Correct tongue weight percentage calculation ---
-tongue_pct = 100 * (tongue_force / total_weight) if total_weight != 0 else 0
-
-# --- Warnings and messages ---
-st.subheader("Results")
-st.metric("Total Weight", f"{total_weight:.1f} lbs")
-st.metric("Tongue Weight", f"{tongue_force:.1f} lbs ({tongue_pct:.1f}%)")
-
-if tongue_force < 0:
-    st.warning("⚠️ WARNING: Hitch is experiencing an **upward** force (negative tongue weight). Load CG may be behind the axle midpoint.")
-else:
-    st.success("✅ Hitch is loaded correctly with **downward** tongue force.")
-
-# --- Assumptions Display ---
-with st.expander("ℹ️ Modeling Assumptions", expanded=True):
-    st.markdown("""
-- Axles are modeled as a single **virtual axle** located at the midpoint between the two actual axles.
-- The load and trailer weight are modeled as point loads located at their respective CGs.
-- All forces are assumed to act **vertically** (no dynamic or wind loading).
-- Positive tongue weight means the hitch is pushing **down**.
+- Trailer load is simplified as single vertical force at specified CG.
+- Trailer frame weight acts at given CG.
+- Axle forces combined into single virtual axle at midpoint of axles.
+- Tongue weight is vertical force on hitch (positive = downward).
 """)
 
-# --- Plot ---
+# Calculate virtual axle midpoint
+if num_axles == 1:
+    virtual_axle = axle_positions[0]
+else:
+    virtual_axle = sum(axle_positions) / len(axle_positions)
+
+# Total weight and moment about hitch
+total_weight = load_weight + trailer_frame_weight
+total_moment = (load_weight * load_cg) + (trailer_frame_weight * trailer_frame_cg)
+
+# Avoid division by zero
+if virtual_axle == 0:
+    st.error("Virtual axle position cannot be zero.")
+    st.stop()
+
+# Calculate axle load (force at virtual axle)
+axle_load = total_moment / virtual_axle
+
+# Calculate tongue weight
+tongue_weight = total_weight - axle_load
+
+# Sanity check: tongue_weight should be positive (downwards force on hitch)
+# If negative, means load CG is behind axle midpoint (unusual)
+tongue_weight_positive = abs(tongue_weight)
+
+# Calculate percentage of tongue weight relative to total weight
+tongue_pct = 100 * (tongue_weight_positive / total_weight) if total_weight != 0 else 0
+
+# Warnings based on tongue weight percentage
+if total_weight == 0:
+    st.warning("Total trailer weight is zero.")
+elif tongue_weight < 0:
+    st.warning("Tongue weight calculated as negative. Load CG may be behind axle midpoint.")
+elif tongue_pct < 10:
+    st.warning(f"Tongue weight is low: {tongue_pct:.1f}% (Recommended 10-15%)")
+elif tongue_pct > 15:
+    st.warning(f"Tongue weight is high: {tongue_pct:.1f}% (Recommended 10-15%)")
+else:
+    st.success(f"Tongue weight is within acceptable range: {tongue_pct:.1f}%")
+
+# Display results
+st.subheader("Results")
+st.write(f"Total Weight = {total_weight:.1f} lbs")
+st.write(f"Virtual Axle Position = {virtual_axle:.1f} in")
+st.write(f"Axle Load = {axle_load:.1f} lbs")
+st.write(f"Tongue Weight = {tongue_weight_positive:.1f} lbs ({tongue_pct:.1f}%)")
+
+# Plotting
 fig, ax = plt.subplots(figsize=(10, 3))
 ax.set_xlim(0, trailer_length)
 ax.set_ylim(-1, 1)
 ax.get_yaxis().set_visible(False)
 ax.set_xlabel("Distance from Hitch (in)")
 
-# Hitch
-ax.axvline(0, color='black', linestyle='--', label="Hitch")
-ax.text(0, 0.6, "Hitch", ha="center", fontsize=8)
+# Hitch line
+ax.axvline(0, color='black', linestyle='--', label='Hitch (0 in)')
 
 # Load CG
 ax.plot(load_cg, 0, "go", label="Load CG")
-ax.text(load_cg, 0.3, f"{load_weight} lbs", ha="center", fontsize=8)
+ax.text(load_cg, 0.3, f"Load\n{load_weight} lbs\n@ {load_cg} in", ha="center", fontsize=8)
 
-# Trailer CG if present
+# Trailer frame CG if any
 if trailer_frame_weight > 0:
     ax.plot(trailer_frame_cg, 0, "ro", label="Trailer Frame CG")
-    ax.text(trailer_frame_cg, -0.3, f"{trailer_frame_weight} lbs", ha="center", fontsize=8)
+    ax.text(trailer_frame_cg, 0.3, f"Frame\n{trailer_frame_weight} lbs\n@ {trailer_frame_cg} in", ha="center", fontsize=8)
 
-# Virtual axle
-ax.axvline(virtual_axle, color="blue", linestyle=":", label="Virtual Axle")
-ax.text(virtual_axle, -0.5, "Virtual Axle", ha="center", fontsize=8)
+# Axles
+for i, pos in enumerate(axle_positions):
+    ax.axvline(pos, color='blue', linestyle=':', label=f'Axle {i+1}' if i==0 else None)
+    ax.text(pos, -0.3, f"Axle {i+1}\n{pos:.0f} in", ha="center", fontsize=8)
 
-ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4)
+# Virtual axle midpoint
+ax.axvline(virtual_axle, color='purple', linestyle='-', label='Virtual Axle Midpoint')
+ax.text(virtual_axle, -0.6, f"Virtual Axle\n{virtual_axle:.1f} in", ha="center", fontsize=8, color='purple')
+
+ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.3), ncol=4)
+
 st.pyplot(fig)
 
 # --- PDF Export ---
-st.subheader("📄 Export Results")
-if st.button("Generate PDF Report"):
-    tmpdir = tempfile.mkdtemp()
-    plot_path = os.path.join(tmpdir, "plot.png")
-    fig.savefig(plot_path, bbox_inches="tight")
 
+def export_pdf():
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Trailer Tongue Weight Report", ln=True)
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, "Trailer Tongue Weight Calculation", ln=True, align='C')
+    pdf.ln(10)
 
-    pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 10, f"Trailer Length: {trailer_length} in", ln=True)
-    pdf.cell(0, 10, f"Virtual Axle at: {virtual_axle:.2f} in", ln=True)
-    pdf.cell(0, 10, f"Load: {load_weight} lbs at {load_cg} in", ln=True)
-    if trailer_frame_weight > 0:
-        pdf.cell(0, 10, f"Trailer Frame: {trailer_frame_weight} lbs at {trailer_frame_cg} in", ln=True)
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 8, f"Trailer Length: {trailer_length} in", ln=True)
+    pdf.cell(0, 8, f"Number of Axles: {num_axles}", ln=True)
+    for i, pos in enumerate(axle_positions):
+        pdf.cell(0, 8, f"Axle {i+1} Position: {pos} in", ln=True)
+    pdf.cell(0, 8, f"Load Weight: {load_weight} lbs", ln=True)
+    pdf.cell(0, 8, f"Load CG: {load_cg} in from hitch", ln=True)
+    pdf.cell(0, 8, f"Trailer Frame Weight: {trailer_frame_weight} lbs", ln=True)
+    pdf.cell(0, 8, f"Trailer Frame CG: {trailer_frame_cg} in from hitch", ln=True)
+    pdf.ln(10)
 
-    pdf.ln(5)
-    pdf.cell(0, 10, f"Total Weight: {total_weight:.1f} lbs", ln=True)
-    pdf.cell(0, 10, f"Tongue Weight: {tongue_force:.1f} lbs ({tongue_pct:.1f}%)", ln=True)
+    pdf.cell(0, 8, f"Total Weight: {total_weight:.1f} lbs", ln=True)
+    pdf.cell(0, 8, f"Virtual Axle Position: {virtual_axle:.1f} in", ln=True)
+    pdf.cell(0, 8, f"Axle Load: {axle_load:.1f} lbs", ln=True)
+    pdf.cell(0, 8, f"Tongue Weight: {tongue_weight_positive:.1f} lbs ({tongue_pct:.1f}%)", ln=True)
+    pdf.ln(10)
 
-    pdf.image(plot_path, x=10, y=None, w=180)
+    # Add plot as image to PDF
+    # Save plot to bytes buffer
+    buf = io.BytesIO()
+    fig.savefig(buf, format='PNG', bbox_inches='tight')
+    buf.seek(0)
+    pdf.image(buf, x=10, y=None, w=pdf.w - 20)  # Leave margin
 
-    pdf_path = os.path.join(tmpdir, "tongue_weight_report.pdf")
-    pdf.output(pdf_path)
+    pdf_output = "trailer_tongue_weight_report.pdf"
+    pdf.output(pdf_output)
+    return pdf_output
 
-    with open(pdf_path, "rb") as f:
-        st.download_button("📥 Download PDF", f, file_name="tongue_weight_report.pdf")
+if st.button("Export PDF Report"):
+    pdf_file = export_pdf()
+    with open(pdf_file, "rb") as f:
+        st.download_button("Download PDF", f, file_name=pdf_file)
+
