@@ -1,133 +1,136 @@
 import streamlit as st
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
+from fpdf import FPDF
 import io
 
 st.set_page_config(layout="wide")
+st.sidebar.title("Trailer Load Input")
 
-# Sidebar Inputs
-st.sidebar.title("Tongue Weight Calculator")
+# --- Input Section ---
+trailer_length = st.sidebar.number_input("Trailer Length from Hitch (in)", value=200)
+trailer_weight = st.sidebar.number_input("Trailer Weight (lbs)", value=0)
+trailer_cg = st.sidebar.number_input("Trailer CoG from Hitch (in)", value=0)
 
-# Load
-st.sidebar.header("Main Load")
-load_weight = st.sidebar.number_input("Load Weight (lbs / kg)", value=11305.0)
-load_position = st.sidebar.number_input("Load Position from Hitch (in / mm)", value=139.0)
-
-# Optional trailer
-st.sidebar.header("Trailer Info (Optional)")
-trailer_weight = st.sidebar.number_input("Trailer Weight (lbs / kg)", value=1500.0)
-trailer_cog = st.sidebar.number_input("Trailer Center of Gravity (in / mm)", value=130.0)
-
-# Axles
-st.sidebar.header("Axle Configuration")
-num_axles = st.sidebar.selectbox("Number of Axles", [1, 2, 3])
+num_axles = st.sidebar.selectbox("Number of Axles", [1, 2, 3], index=1)
 axle_positions = []
 for i in range(num_axles):
-    pos = st.sidebar.number_input(f"Axle {i+1} Position from Hitch (in)", value=100.0 + i * 40)
+    pos = st.sidebar.number_input(f"Axle {i+1} Position from Hitch (in)", value=100 + 30 * i)
     axle_positions.append(pos)
 
-# Build position/weight list
-positions = [load_position]
-weights = [load_weight]
-labels = ["Load"]
+num_loads = st.sidebar.number_input("Number of Additional Loads", min_value=1, max_value=10, value=1)
+loads = []
+for i in range(num_loads):
+    weight = st.sidebar.number_input(f"Load {i+1} Weight (lbs)", value=1000, key=f"w{i}")
+    position = st.sidebar.number_input(f"Load {i+1} Position from Hitch (in)", value=100, key=f"p{i}")
+    loads.append((weight, position))
 
-if trailer_weight > 0:
-    positions.append(trailer_cog)
-    weights.append(trailer_weight)
-    labels.append("Trailer")
+# --- Helper Functions ---
+def compute_tongue_and_axle_loads(loads, trailer_weight, trailer_cg, axle_positions):
+    # Add trailer as a load if weight is specified
+    if trailer_weight > 0:
+        loads.append((trailer_weight, trailer_cg))
 
-positions = np.array(positions)
-weights = np.array(weights)
-total_weight = np.sum(weights)
+    total_weight = sum(w for w, _ in loads)
+    total_moment = sum(w * x for w, x in loads)
 
-# Set up equilibrium equations: [Tongue, Axle1, Axle2, Axle3]
-n_unknowns = 1 + num_axles
-A = np.zeros((2, n_unknowns))  # 2 equations: force and moment
-b = np.zeros(2)
+    # Moment balance about the hitch to find tongue weight
+    tongue_weight = total_moment / trailer_length
 
-# Force balance
-A[0, 0] = 1  # Tongue
-A[0, 1:] = 1  # Axles
-b[0] = total_weight
+    # Distribute the rest of the load to axles based on position and moment balance
+    axle_loads = []
+    axle_moments = [abs(x - trailer_length / 2) for x in axle_positions]
+    total_moment_arm = sum(1 / (m + 1e-6) for m in axle_moments)  # Prevent div by zero
 
-# Moment balance about hitch
-# Tongue moment is zero
-for i, pos in enumerate(axle_positions):
-    A[1, i + 1] = pos
-b[1] = np.sum(positions * weights)
+    distributed_weight = total_weight - tongue_weight
+    for m in axle_moments:
+        load_share = (1 / (m + 1e-6)) / total_moment_arm
+        axle_loads.append(distributed_weight * load_share)
 
-try:
-    solution = np.linalg.solve(A, b)
-except np.linalg.LinAlgError:
-    st.error("Cannot solve equations. Check that axle positions are unique and inputs are valid.")
-    st.stop()
+    return tongue_weight, axle_loads, total_weight
 
-tongue_weight = solution[0]
-axle_loads = solution[1:]
-tongue_percent = (tongue_weight / total_weight) * 100 if total_weight > 0 else 0
+# --- Computation ---
+tongue_weight, axle_loads, total_weight = compute_tongue_and_axle_loads(
+    loads[:], trailer_weight, trailer_cg, axle_positions
+)
+tongue_pct = 100 * tongue_weight / total_weight
 
-# === Output Layout ===
-col1, col2 = st.columns([3, 2])
+# --- Warnings ---
+if tongue_pct < 10:
+    st.warning(f"Tongue weight is too low: {tongue_pct:.1f}% (Recommended: 10–15%)")
+elif tongue_pct > 15:
+    st.warning(f"Tongue weight is too high: {tongue_pct:.1f}% (Recommended: 10–15%)")
+else:
+    st.success(f"Tongue weight is in acceptable range: {tongue_pct:.1f}%")
 
-# === Plot: Linear Distribution ===
+# --- Layout ---
+col1, col2 = st.columns([2, 1])
+
+# --- Plot (2D Layout) ---
 with col1:
     fig, ax = plt.subplots(figsize=(10, 3))
-    ax.set_title("Linear Load Distribution")
-    ax.set_xlabel("Distance from Hitch (in)")
-    ax.set_yticks([])
+    ax.set_xlim(0, trailer_length)
+    ax.set_ylim(-1, 1)
+    ax.get_yaxis().set_visible(False)
+    ax.set_xlabel("Trailer Length from Hitch (in)")
+
+    # Hitch marker
+    ax.axvline(0, color="black", linestyle="--", label="Hitch (0 in)")
 
     # Plot loads
-    for pos, wt, label in zip(positions, weights, labels):
-        ax.plot(pos, 0, 'o', label=f"{label}: {wt:.1f} lbs")
-        ax.annotate(f"{label}\n{wt:.1f} lbs", xy=(pos, 0), xytext=(0, 15),
-                    textcoords="offset points", ha='center', fontsize=9)
+    for i, (w, x) in enumerate(loads):
+        ax.plot(x, 0, "ro")
+        ax.text(x, 0.1 + 0.05 * (i % 3), f"{w} lbs", ha="center", fontsize=8)
+        ax.text(x, -0.15, f"Load {i+1}", ha="center", fontsize=7)
 
-    # Plot axles
-    for i, pos in enumerate(axle_positions):
-        ax.plot(pos, 0, 's', color=f"C{i+2}", label=f"Axle {i+1}: {axle_loads[i]:.1f} lbs")
-        ax.annotate(f"Axle {i+1}\n{axle_loads[i]:.1f} lbs", xy=(pos, 0), xytext=(0, -25),
-                    textcoords="offset points", ha='center', fontsize=9)
+    # Trailer CoG
+    if trailer_weight > 0:
+        ax.plot(trailer_cg, 0, "go")
+        ax.text(trailer_cg, 0.25, f"{trailer_weight} lbs\n(Trailer)", ha="center", fontsize=7)
 
-    ax.axhline(0, color='gray', linestyle='--', linewidth=0.5)
-    ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.45), ncol=3, fontsize=9)
-    ax.grid(True)
+    # Axles
+    for i, (x, load) in enumerate(zip(axle_positions, axle_loads)):
+        ax.axvline(x, color="blue", linestyle=":")
+        ax.text(x, -0.4, f"Axle {i+1}\n{load:.0f} lbs", ha="center", fontsize=8)
+
+    # Legend
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.65), ncol=4)
     st.pyplot(fig)
 
-# === Plot: Axle Load Bar Chart ===
+# --- Axle Load Distribution Bar Chart ---
 with col2:
-    fig2, ax2 = plt.subplots(figsize=(4, 3))
-    ax2.barh([f"Axle {i+1}" for i in range(num_axles)], axle_loads, color='skyblue')
+    st.subheader("Axle Load Sharing")
+    labels = [f"Axle {i+1}" for i in range(len(axle_loads))]
+    fig2, ax2 = plt.subplots()
+    ax2.barh(labels, axle_loads, color="skyblue")
     ax2.set_xlabel("Load (lbs)")
-    ax2.set_title("Axle Load Distribution")
     st.pyplot(fig2)
 
-# === Text Output ===
-st.subheader("Tongue Weight Results")
-st.markdown(f"**Total Load:** {total_weight:.1f} lbs")
-st.markdown(f"**Tongue Weight:** {tongue_weight:.1f} lbs")
-st.markdown(f"**Tongue Weight %:** {tongue_percent:.1f}%")
+# --- Export to PDF ---
+if st.button("Export Results to PDF"):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="Tongue Weight Calculator Results", ln=True, align="C")
+    pdf.ln()
 
-if tongue_percent < 10:
-    st.warning("⚠️ Tongue weight is **below 10%** — risk of sway.")
-elif tongue_percent > 15:
-    st.warning("⚠️ Tongue weight is **above 15%** — excessive load on hitch.")
-else:
-    st.success("✅ Tongue weight is within recommended range (10%–15%).")
+    pdf.cell(200, 10, txt=f"Total Weight: {total_weight:.1f} lbs", ln=True)
+    pdf.cell(200, 10, txt=f"Tongue Weight: {tongue_weight:.1f} lbs ({tongue_pct:.1f}%)", ln=True)
+    pdf.ln()
+    for i, load in enumerate(axle_loads):
+        pdf.cell(200, 10, txt=f"Axle {i+1} Load: {load:.1f} lbs", ln=True)
 
-# === PDF Export ===
-st.subheader("Export to PDF")
-if st.button("Generate PDF Report"):
-    buffer = io.BytesIO()
-    with PdfPages(buffer) as pdf:
-        fig.tight_layout()
-        pdf.savefig(fig)
-        fig2.tight_layout()
-        pdf.savefig(fig2)
+    # Save figures to buffer
+    buf1 = io.BytesIO()
+    fig.savefig(buf1, format="png", bbox_inches="tight")
+    buf1.seek(0)
+    pdf.image(buf1, x=10, y=pdf.get_y(), w=190)
+    pdf.ln(65)
 
-    st.download_button(
-        label="Download PDF",
-        data=buffer.getvalue(),
-        file_name="tongue_weight_report.pdf",
-        mime="application/pdf"
-    )
+    buf2 = io.BytesIO()
+    fig2.savefig(buf2, format="png", bbox_inches="tight")
+    buf2.seek(0)
+    pdf.image(buf2, x=10, y=pdf.get_y(), w=190)
+
+    st.download_button("Download PDF", data=pdf.output(dest="S").encode("latin-1"),
+                       file_name="tongue_weight_report.pdf", mime="application/pdf")
