@@ -1,155 +1,126 @@
 import streamlit as st
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
-import tempfile
-from fpdf import FPDF
-import os
+import io
 
 st.set_page_config(layout="wide")
 
-st.sidebar.header("Trailer Load Inputs")
+st.sidebar.title("Tongue Weight Calculator")
 
-# Unit toggle
-units = st.sidebar.selectbox("Units", ["Imperial (in, lbs)", "Metric (mm, kg)"])
-is_metric = "Metric" in units
-unit_length = "mm" if is_metric else "in"
-unit_weight = "kg" if is_metric else "lbs"
+# Load inputs
+st.sidebar.header("Load Info")
+load_weight = st.sidebar.number_input("Load Weight (lbs / kg)", value=1000.0)
+load_position = st.sidebar.number_input("Load Position from Hitch (in / mm)", value=100.0)
 
-# Conversion factor
-length_factor = 25.4 if is_metric else 1
-weight_factor = 0.453592 if is_metric else 1
+# Optional trailer weight
+st.sidebar.header("Optional Trailer Info")
+trailer_weight = st.sidebar.number_input("Trailer Weight (lbs / kg)", value=0.0)
+trailer_cog = st.sidebar.number_input("Trailer Center of Gravity (in / mm)", value=0.0)
 
-# Axle input
+# Axle inputs
+st.sidebar.header("Axle Positions")
 num_axles = st.sidebar.selectbox("Number of Axles", [1, 2, 3])
 axle_positions = []
 for i in range(num_axles):
-    pos = st.sidebar.number_input(f"Axle {i+1} Position from Hitch ({unit_length})", min_value=0.0)
-    axle_positions.append(pos / length_factor)
-axle_positions = sorted(axle_positions)
+    pos = st.sidebar.number_input(f"Axle {i+1} Position from Hitch (in / mm)", value=100.0 + i * 40)
+    axle_positions.append(pos)
 
-# Load inputs
-loads = []
-load_count = st.sidebar.number_input("Number of Point Loads", min_value=1, max_value=10, value=1)
-for i in range(load_count):
-    weight = st.sidebar.number_input(f"Load {i+1} Weight ({unit_weight})", min_value=0.0)
-    dist = st.sidebar.number_input(f"Load {i+1} Distance from Hitch ({unit_length})", min_value=0.0)
-    loads.append((weight / weight_factor, dist / length_factor))
+# Combine all loads
+positions = [load_position]
+weights = [load_weight]
+labels = ["Load"]
 
-# Optional trailer input
-include_trailer = st.sidebar.checkbox("Include Trailer Weight & CG")
-if include_trailer:
-    trailer_weight = st.sidebar.number_input(f"Trailer Weight ({unit_weight})", min_value=0.0) / weight_factor
-    trailer_cg = st.sidebar.number_input(f"Trailer CG from Hitch ({unit_length})", min_value=0.0) / length_factor
-    loads.append((trailer_weight, trailer_cg))
+if trailer_weight > 0:
+    positions.append(trailer_cog)
+    weights.append(trailer_weight)
+    labels.append("Trailer")
 
-# Sum total weight and moment
-total_weight = sum(w for w, _ in loads)
-total_moment = sum(w * x for w, x in loads)
+# Convert to numpy arrays
+positions = np.array(positions)
+weights = np.array(weights)
 
-# Set up equilibrium equations
-A = np.zeros((2 + len(axle_positions), len(axle_positions)))
-b = np.zeros(2 + len(axle_positions))
+# Force/moment equations: solve for reactions at axles
+A = np.zeros((2, num_axles))
+b = np.zeros(2)
 
-# Sum of forces
+# Total vertical load balance
 A[0, :] = 1
-b[0] = total_weight
+b[0] = np.sum(weights)
 
-# Sum of moments about hitch
-A[1, :] = axle_positions
-b[1] = total_moment
+# Moment balance around hitch
+for i in range(num_axles):
+    A[1, i] = axle_positions[i]
+b[1] = np.sum(positions * weights)
 
-# Each variable corresponds to axle load only
-for i in range(len(axle_positions)):
-    A[2 + i, i] = 1
+# Solve for axle loads
+axle_loads = np.linalg.lstsq(A.T, b, rcond=None)[0]
 
-# Solve using least squares
-axle_loads, *_ = np.linalg.lstsq(A, b, rcond=None)
+# Compute tongue weight
+total_weight = np.sum(weights)
+total_moment = np.sum(positions * weights)
+tongue_weight = total_weight - np.sum(axle_loads)
 
-# Calculate tongue weight
-tongue_weight = total_weight - sum(axle_loads)
-tongue_percentage = (tongue_weight / total_weight) * 100
+tongue_percent = tongue_weight / total_weight * 100 if total_weight > 0 else 0
 
-# Display results
-st.title("Tongue Weight Calculator")
+# Layout
+col1, col2 = st.columns([3, 2])
 
-col1, col2 = st.columns([2, 1])
-
-# --- Plot layout view ---
+# Plot 1: Positions and weights
 with col1:
-    fig, ax = plt.subplots(figsize=(10, 2))
-
-    for w, x in loads:
-        ax.plot(x, 0, 'o', markersize=10)
-        ax.text(x, 0.2, f"{w:.0f} {unit_weight}", ha='center', fontsize=8)
-
-    for i, pos in enumerate(axle_positions):
-        ax.axvline(pos, color='gray', linestyle='--')
-        ax.text(pos, -0.2, f"Axle {i+1}\n({pos*length_factor:.0f} {unit_length})", ha='center', fontsize=8)
-
-    ax.axvline(0, color='black', linestyle='-', linewidth=2)
-    ax.text(0, 0.2, "Hitch", ha='center', fontsize=9, fontweight='bold')
-
-    ax.set_xlim(-10, max(axle_positions + [x for _, x in loads]) + 20)
+    fig, ax = plt.subplots(figsize=(10, 3))
+    ax.set_title("Load Distribution")
+    ax.set_xlabel("Distance from Hitch (in)")
     ax.set_yticks([])
-    ax.set_xlabel(f"Distance from Hitch ({unit_length})")
-    ax.set_title("Trailer Load Layout")
+    
+    # Plot points
+    for i, (pos, w, label) in enumerate(zip(positions, weights, labels)):
+        ax.plot(pos, 0, 'o', label=f"{label}: {w:.1f} lbs")
+        ax.annotate(f"{label}\n{w:.1f} lbs", (pos, 0), textcoords="offset points", xytext=(0, 10), ha='center')
+
+    # Plot axles
+    for i, pos in enumerate(axle_positions):
+        ax.plot(pos, 0, 's', label=f"Axle {i+1}: {axle_loads[i]:.1f} lbs", color=f"C{i+2}")
+        ax.annotate(f"Axle {i+1}\n{axle_loads[i]:.1f} lbs", (pos, 0), textcoords="offset points", xytext=(0, -25), ha='center')
+
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.6), ncol=3)
+    ax.grid(True)
     st.pyplot(fig)
 
-# --- Bar chart for axle load distribution ---
+# Plot 2: Axle load bar chart
 with col2:
-    fig2, ax2 = plt.subplots(figsize=(3, 2))
-    labels = [f"Axle {i+1}" for i in range(len(axle_positions))]
-    values = [l for l in axle_loads]
-    percent = [v / total_weight * 100 for v in values]
-
-    ax2.barh(labels, percent, color='cornflowerblue')
-    ax2.set_xlim(0, 100)
-    ax2.set_xlabel("Load %")
+    fig2, ax2 = plt.subplots(figsize=(4, 3))
+    ax2.barh([f"Axle {i+1}" for i in range(num_axles)], axle_loads, color='skyblue')
+    ax2.set_xlabel("Load (lbs)")
     ax2.set_title("Axle Load Distribution")
-    for i, v in enumerate(percent):
-        ax2.text(v + 1, i, f"{v:.1f}%", va='center')
-
     st.pyplot(fig2)
 
-# --- Results & Warnings ---
-st.subheader("Results")
-color = 'green' if 10 <= tongue_percentage <= 15 else 'red'
-st.markdown(f"**Tongue Weight:** <span style='color:{color}'>{tongue_weight:.1f} {unit_weight} ({tongue_percentage:.1f}%)</span>", unsafe_allow_html=True)
+# Tongue weight results
+st.subheader("Tongue Weight Results")
+st.markdown(f"**Total Weight:** {total_weight:.1f} lbs")
+st.markdown(f"**Tongue Weight:** {tongue_weight:.1f} lbs")
+st.markdown(f"**Tongue Weight %:** {tongue_percent:.1f}%")
 
-if tongue_percentage < 10:
-    st.warning("Tongue weight is too low! This may cause trailer sway.")
-elif tongue_percentage > 15:
-    st.warning("Tongue weight is too high! This may overload the hitch or tow vehicle.")
+if tongue_percent < 10:
+    st.warning("Warning: Tongue weight is less than 10% of total weight.")
+elif tongue_percent > 15:
+    st.warning("Warning: Tongue weight is greater than 15% of total weight.")
+else:
+    st.success("Tongue weight is within acceptable range (10%-15%).")
 
-# --- Export to PDF ---
-if st.button("Export PDF Report"):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-        fig.savefig(tmpfile.name)
-        layout_img = tmpfile.name
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-        fig2.savefig(tmpfile.name)
-        dist_img = tmpfile.name
+# PDF export
+st.subheader("Export Results")
+if st.button("Generate PDF Report"):
+    pdf_buffer = io.BytesIO()
+    with PdfPages(pdf_buffer) as pdf:
+        fig.tight_layout()
+        pdf.savefig(fig)
+        fig2.tight_layout()
+        pdf.savefig(fig2)
 
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, "Trailer Load Analysis Results", ln=True, align='C')
-    pdf.ln(10)
-    pdf.cell(200, 10, f"Tongue Weight: {tongue_weight:.1f} {unit_weight} ({tongue_percentage:.1f}%)", ln=True)
-    pdf.ln(5)
-    pdf.cell(200, 10, f"Axle Loads: {[f'{v:.1f}' for v in values]} {unit_weight}", ln=True)
-    pdf.ln(5)
-    pdf.image(layout_img, x=10, y=50, w=180)
-    pdf.add_page()
-    pdf.image(dist_img, x=10, y=40, w=100)
-
-    pdf_output_path = os.path.join(tempfile.gettempdir(), "trailer_load_report.pdf")
-    pdf.output(pdf_output_path)
-
-    with open(pdf_output_path, "rb") as f:
-        st.download_button(
-            label="Download PDF Report",
-            data=f,
-            file_name="trailer_load_report.pdf",
-            mime="application/pdf"
-        )
+    st.download_button(
+        label="Download PDF",
+        data=pdf_buffer.getvalue(),
+        file_name="tongue_weight_report.pdf",
+        mime="application/pdf"
+    )
