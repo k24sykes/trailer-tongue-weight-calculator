@@ -1,6 +1,9 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 import numpy as np
+from io import BytesIO
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 # --- Page config ---
 st.set_page_config(layout="wide")
@@ -16,7 +19,7 @@ for i in range(num_axles):
     axle_positions.append(pos)
 
 trailer_weight = st.sidebar.number_input("Trailer Load Weight (lbs)", value=11305)
-trailer_cg = st.sidebar.number_input("Load Center of Gravity from Hitch (in)", value=100)
+trailer_cg = st.sidebar.number_input("Load Center of Gravity from Hitch (in)", value=139)
 
 # --- Helper Function ---
 def compute_tongue_and_axle_loads(trailer_weight, trailer_cg, axle_positions):
@@ -33,7 +36,6 @@ def compute_tongue_and_axle_loads(trailer_weight, trailer_cg, axle_positions):
 
     elif n == 2:
         x1, x2 = x_axles
-        # Calculate tongue weight assuming equal axle loads
         T = W * (1 - 2 * x_cg / (x1 + x2))
         A1 = A2 = (W - T) / 2
         return T, [A1, A2]
@@ -93,3 +95,42 @@ with col2:
         st.markdown("### Axle Loads")
         for i, load in enumerate(axle_loads):
             st.write(f"Axle {i+1}: **{load:.1f} lbs**")
+
+    # --- PDF Export ---
+    def generate_pdf():
+        buffer = BytesIO()
+        c = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(50, height - 50, "Trailer Load Calculation Report")
+
+        c.setFont("Helvetica", 12)
+        c.drawString(50, height - 80, f"Trailer Length from Hitch: {trailer_length} in")
+        c.drawString(50, height - 100, f"Number of Axles: {num_axles}")
+        for i, x in enumerate(axle_positions):
+            c.drawString(70, height - 120 - 20 * i, f"Axle {i+1} Position from Hitch: {x} in")
+
+        c.drawString(50, height - 160, f"Trailer Load Weight: {trailer_weight} lbs")
+        c.drawString(50, height - 180, f"Load Center of Gravity from Hitch: {trailer_cg} in")
+
+        c.drawString(50, height - 220, f"Tongue Weight: {tongue_weight:.1f} lbs ({tongue_pct:.1f}%)")
+
+        c.drawString(50, height - 250, "Axle Loads:")
+        y_pos = height - 270
+        for i, load in enumerate(axle_loads):
+            c.drawString(70, y_pos, f"Axle {i+1}: {load:.1f} lbs")
+            y_pos -= 20
+
+        c.showPage()
+        c.save()
+        buffer.seek(0)
+        return buffer
+
+    pdf_buffer = generate_pdf()
+    st.download_button(
+        label="Download PDF Report",
+        data=pdf_buffer,
+        file_name="trailer_load_report.pdf",
+        mime="application/pdf"
+    )
