@@ -39,10 +39,12 @@ distance_axle_to_hitch = virtual_axle
 if distance_axle_to_hitch != 0:
     tongue_force = total_moment / distance_axle_to_hitch
 else:
-    tongue_force = 0
+    tongue_force = 0.0
 
 tongue_force = round(tongue_force, 2)
-tongue_pct = 100 * tongue_force / total_weight if total_weight else 0
+
+# --- Correct tongue weight percentage calculation ---
+tongue_pct = 100 * (tongue_force / total_weight) if total_weight != 0 else 0
 
 # --- Warnings and messages ---
 st.subheader("Results")
@@ -93,7 +95,6 @@ st.pyplot(fig)
 # --- PDF Export ---
 st.subheader("📄 Export Results")
 if st.button("Generate PDF Report"):
-    # Save the plot to a temporary file
     tmpdir = tempfile.mkdtemp()
     plot_path = os.path.join(tmpdir, "plot.png")
     fig.savefig(plot_path, bbox_inches="tight")
@@ -105,7 +106,7 @@ if st.button("Generate PDF Report"):
 
     pdf.set_font("Arial", "", 12)
     pdf.cell(0, 10, f"Trailer Length: {trailer_length} in", ln=True)
-    pdf.cell(0, 10, f"Virtual Axle at: {virtual_axle} in", ln=True)
+    pdf.cell(0, 10, f"Virtual Axle at: {virtual_axle:.2f} in", ln=True)
     pdf.cell(0, 10, f"Load: {load_weight} lbs at {load_cg} in", ln=True)
     if trailer_frame_weight > 0:
         pdf.cell(0, 10, f"Trailer Frame: {trailer_frame_weight} lbs at {trailer_frame_cg} in", ln=True)
@@ -114,13 +115,10 @@ if st.button("Generate PDF Report"):
     pdf.cell(0, 10, f"Total Weight: {total_weight:.1f} lbs", ln=True)
     pdf.cell(0, 10, f"Tongue Weight: {tongue_force:.1f} lbs ({tongue_pct:.1f}%)", ln=True)
 
-    # Add plot
     pdf.image(plot_path, x=10, y=None, w=180)
 
-    # Save PDF
     pdf_path = os.path.join(tmpdir, "tongue_weight_report.pdf")
     pdf.output(pdf_path)
 
     with open(pdf_path, "rb") as f:
         st.download_button("📥 Download PDF", f, file_name="tongue_weight_report.pdf")
-
