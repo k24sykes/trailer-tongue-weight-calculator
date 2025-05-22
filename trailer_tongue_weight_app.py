@@ -27,24 +27,71 @@ for i in range(num_loads):
 
 # --- Helper Function ---
 def compute_tongue_and_axle_loads(loads, trailer_weight, trailer_cg, axle_positions):
-    # Add trailer body as a load
     if trailer_weight > 0:
         loads.append((trailer_weight, trailer_cg))
 
     total_weight = sum(w for w, _ in loads)
+    total_moment = sum(w * x for w, x in loads)
 
-    # Use average of axle positions as balance point
-    axle_center = sum(axle_positions) / len(axle_positions)
+    n = len(axle_positions)
+    if n == 1:
+        a = axle_positions[0]
+        R1 = (total_weight * a - total_moment) / a
+        R2 = total_weight - R1
+        axle_loads = [R2]
+        tongue_weight = R1
 
-    # Calculate total moment about axle center
-    total_moment = sum(w * (x - axle_center) for w, x in loads)
+    elif n == 2:
+        a1, a2 = axle_positions
+        d = a2 - a1
+        M = total_moment
+        W = total_weight
+        R2 = (M - W * a1) / d
+        R1 = W - R2
+        T = W - R1 - R2
+        tongue_weight = T
+        axle_loads = [R1, R2]
 
-    # Solve for tongue weight using moment balance
-    tongue_weight = -total_moment / axle_center
+    elif n == 3:
+        a1, a2, a3 = axle_positions
+        W = total_weight
+        M = total_moment
 
-    # Remaining weight goes equally to axles
-    axle_total_load = total_weight - tongue_weight
-    axle_loads = [axle_total_load / len(axle_positions)] * len(axle_positions)
+        # Let T = tongue weight, R1, R2, R3 = axle loads
+        # Equations:
+        # 1. T + R1 + R2 + R3 = W
+        # 2. T*0 + R1*a1 + R2*a2 + R3*a3 = M
+        # 3. Assume equal stiffness: enforce even load sharing between outer axles R1 and R3 via symmetry:
+        #    R1 = R3
+
+        # So we reduce to solving for R1 and R2
+        # R1 + R2 + R1 = W - T --> 2*R1 + R2 = W - T
+        # R1*a1 + R2*a2 + R1*a3 = M - T*0 --> R1*(a1 + a3) + R2*a2 = M
+
+        # Eliminate T:
+        # 2*R1 + R2 = W - T => T = W - (2*R1 + R2)
+
+        A = np.array([
+            [2, 1],
+            [a1 + a3, a2]
+        ])
+        b = np.array([
+            W,
+            M
+        ])
+        try:
+            R1_R2 = np.linalg.solve(A, b)
+            R1 = R3 = R1_R2[0]
+            R2 = R1_R2[1]
+            T = W - (R1 + R2 + R3)
+            axle_loads = [R1, R2, R3]
+            tongue_weight = T
+        except np.linalg.LinAlgError:
+            axle_loads = [0, 0, 0]
+            tongue_weight = total_weight
+
+    else:
+        raise ValueError("Only 1–3 axles are supported.")
 
     return tongue_weight, axle_loads, total_weight
 
@@ -52,7 +99,7 @@ def compute_tongue_and_axle_loads(loads, trailer_weight, trailer_cg, axle_positi
 tongue_weight, axle_loads, total_weight = compute_tongue_and_axle_loads(
     loads[:], trailer_weight, trailer_cg, axle_positions
 )
-tongue_pct = 100 * tongue_weight / total_weight
+tongue_pct = 100 * tongue_weight / total_weight if total_weight > 0 else 0
 
 # --- Warnings ---
 if tongue_pct < 10:
@@ -65,7 +112,7 @@ else:
 # --- Layout ---
 col1, col2 = st.columns([2, 1])
 
-# --- Plot (2D Layout) ---
+# --- Plot ---
 with col1:
     fig, ax = plt.subplots(figsize=(10, 3))
     ax.set_xlim(0, trailer_length)
@@ -73,30 +120,25 @@ with col1:
     ax.get_yaxis().set_visible(False)
     ax.set_xlabel("Trailer Length from Hitch (in)")
 
-    # Hitch marker
     ax.axvline(0, color="black", linestyle="--", label="Hitch (0 in)")
 
-    # Plot loads
     for i, (w, x) in enumerate(loads):
         ax.plot(x, 0, "ro")
         ax.text(x, 0.1 + 0.05 * (i % 3), f"{w} lbs", ha="center", fontsize=8)
         ax.text(x, -0.15, f"Load {i+1}", ha="center", fontsize=7)
 
-    # Trailer CoG
     if trailer_weight > 0:
         ax.plot(trailer_cg, 0, "go")
         ax.text(trailer_cg, 0.25, f"{trailer_weight} lbs\n(Trailer)", ha="center", fontsize=7)
 
-    # Axles
     for i, (x, load) in enumerate(zip(axle_positions, axle_loads)):
         ax.axvline(x, color="blue", linestyle=":")
         ax.text(x, -0.4, f"Axle {i+1}\n{load:.0f} lbs", ha="center", fontsize=8)
 
-    # Legend
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.65), ncol=4)
     st.pyplot(fig)
 
-# --- Axle Load Distribution Bar Chart ---
+# --- Axle Load Bar Chart ---
 with col2:
     st.subheader("Axle Load Sharing")
     labels = [f"Axle {i+1}" for i in range(len(axle_loads))]
@@ -119,7 +161,6 @@ if st.button("Export Results to PDF"):
     for i, load in enumerate(axle_loads):
         pdf.cell(200, 10, txt=f"Axle {i+1} Load: {load:.1f} lbs", ln=True)
 
-    # Save figures to buffer
     buf1 = io.BytesIO()
     fig.savefig(buf1, format="png", bbox_inches="tight")
     buf1.seek(0)
