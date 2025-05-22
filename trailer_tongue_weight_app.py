@@ -1,7 +1,7 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 from fpdf import FPDF
-import io
+import os
 
 st.set_page_config(layout="wide")
 st.title("Trailer Tongue Weight Calculator (Simplified Model)")
@@ -43,25 +43,15 @@ else:
 total_weight = load_weight + trailer_frame_weight
 total_moment = (load_weight * load_cg) + (trailer_frame_weight * trailer_frame_cg)
 
-# Avoid division by zero
 if virtual_axle == 0:
     st.error("Virtual axle position cannot be zero.")
     st.stop()
 
-# Calculate axle load (force at virtual axle)
 axle_load = total_moment / virtual_axle
-
-# Calculate tongue weight
 tongue_weight = total_weight - axle_load
-
-# Sanity check: tongue_weight should be positive (downwards force on hitch)
-# If negative, means load CG is behind axle midpoint (unusual)
 tongue_weight_positive = abs(tongue_weight)
-
-# Calculate percentage of tongue weight relative to total weight
 tongue_pct = 100 * (tongue_weight_positive / total_weight) if total_weight != 0 else 0
 
-# Warnings based on tongue weight percentage
 if total_weight == 0:
     st.warning("Total trailer weight is zero.")
 elif tongue_weight < 0:
@@ -87,29 +77,22 @@ ax.set_ylim(-1, 1)
 ax.get_yaxis().set_visible(False)
 ax.set_xlabel("Distance from Hitch (in)")
 
-# Hitch line
 ax.axvline(0, color='black', linestyle='--', label='Hitch (0 in)')
-
-# Load CG
 ax.plot(load_cg, 0, "go", label="Load CG")
 ax.text(load_cg, 0.3, f"Load\n{load_weight} lbs\n@ {load_cg} in", ha="center", fontsize=8)
 
-# Trailer frame CG if any
 if trailer_frame_weight > 0:
     ax.plot(trailer_frame_cg, 0, "ro", label="Trailer Frame CG")
     ax.text(trailer_frame_cg, 0.3, f"Frame\n{trailer_frame_weight} lbs\n@ {trailer_frame_cg} in", ha="center", fontsize=8)
 
-# Axles
 for i, pos in enumerate(axle_positions):
-    ax.axvline(pos, color='blue', linestyle=':', label=f'Axle {i+1}' if i==0 else None)
+    ax.axvline(pos, color='blue', linestyle=':', label=f'Axle {i+1}' if i == 0 else None)
     ax.text(pos, -0.3, f"Axle {i+1}\n{pos:.0f} in", ha="center", fontsize=8)
 
-# Virtual axle midpoint
 ax.axvline(virtual_axle, color='purple', linestyle='-', label='Virtual Axle Midpoint')
 ax.text(virtual_axle, -0.6, f"Virtual Axle\n{virtual_axle:.1f} in", ha="center", fontsize=8, color='purple')
 
 ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.3), ncol=4)
-
 st.pyplot(fig)
 
 # --- PDF Export ---
@@ -138,19 +121,18 @@ def export_pdf():
     pdf.cell(0, 8, f"Tongue Weight: {tongue_weight_positive:.1f} lbs ({tongue_pct:.1f}%)", ln=True)
     pdf.ln(10)
 
-    # Add plot as image to PDF
-    # Save plot to bytes buffer
-    buf = io.BytesIO()
-    fig.savefig(buf, format='PNG', bbox_inches='tight')
-    buf.seek(0)
-    pdf.image(buf, x=10, y=None, w=pdf.w - 20)  # Leave margin
+    # Save plot to temp file
+    plot_path = "/mnt/data/temp_plot.png"
+    fig.savefig(plot_path, bbox_inches='tight')
 
-    pdf_output = "trailer_tongue_weight_report.pdf"
-    pdf.output(pdf_output)
-    return pdf_output
+    pdf.image(plot_path, x=10, w=pdf.w - 20)
+    return pdf.output(dest='S').encode('latin1')  # Return PDF as bytes
 
 if st.button("Export PDF Report"):
-    pdf_file = export_pdf()
-    with open(pdf_file, "rb") as f:
-        st.download_button("Download PDF", f, file_name=pdf_file)
-
+    pdf_bytes = export_pdf()
+    st.download_button(
+        label="Download PDF",
+        data=pdf_bytes,
+        file_name="trailer_tongue_weight_report.pdf",
+        mime="application/pdf"
+    )
