@@ -32,51 +32,57 @@ for i in range(num_loads):
 
 # --- Helper Functions ---
 def compute_tongue_and_axle_loads(loads, trailer_weight, trailer_cg, axle_positions):
-    # Append trailer weight if provided and CG > 0
     loads_copy = loads.copy()
     if trailer_weight > 0 and trailer_cg > 0:
         loads_copy.append((trailer_weight, trailer_cg))
 
     total_weight = sum(w for w, _ in loads_copy)
     total_moment = sum(w * x for w, x in loads_copy)
+
     n = len(axle_positions)
 
     if n == 0 or total_weight == 0:
-        # No axles or no load
         return 0, [], total_weight
 
-    # 1 axle: use force and moment equilibrium
+    # For 1 axle, solve exactly for T and A1
     if n == 1:
-        axle_pos = axle_positions[0]
-        if axle_pos == 0:
-            # Axle at hitch (degenerate)
-            axle_load = total_weight
-            tongue_weight = 0
+        x1 = axle_positions[0]
+        if x1 == 0:
+            # Degenerate: axle at hitch, all weight on axle, no tongue load
+            A1 = total_weight
+            T = 0
         else:
-            axle_load = total_moment / axle_pos
-            tongue_weight = total_weight - axle_load
-        return tongue_weight, [axle_load], total_weight
+            A1 = total_moment / x1
+            T = total_weight - A1
+        return T, [A1], total_weight
 
-    # 2 axles: solve system of linear equations
-    if n == 2:
-        A = np.array([
-            [1, 1],  # sum of vertical loads = total_weight - tongue_weight
-            [axle_positions[0], axle_positions[1]]  # moment equilibrium
-        ])
-        b = np.array([total_weight, total_moment])
-        axle_loads = np.linalg.solve(A, b)
-        tongue_weight = total_weight - axle_loads.sum()
-        return tongue_weight, axle_loads.tolist(), total_weight
+    # For multiple axles (2 or 3), solve with assumptions
 
-    # 3 axles: underdetermined system, distribute loads proportionally by axle position moments
-    pos_array = np.array(axle_positions)
-    # Calculate total position sum
-    total_pos = pos_array.sum()
-    # Axle loads proportional to positions, scaled to satisfy moment
-    axle_loads = (total_moment / total_pos) * np.ones(n)
-    tongue_weight = total_weight - axle_loads.sum()
+    pos = np.array(axle_positions)
 
-    return tongue_weight, axle_loads.tolist(), total_weight
+    # Assumption: tongue weight + axles sum to total weight
+    # Moments about hitch: sum(axle_loads * axle_positions) = total_moment
+    # Tongue weight acts at position 0, no moment arm
+
+    # Number of unknowns = n+1 (T and n axle loads)
+    # Number of equations = 2 (vertical force and moment equilibrium)
+    # Underdetermined system for n > 1
+
+    # Approach:
+    # - Solve for tongue weight T and total axle load S = total_weight - T
+    # - Distribute axle loads proportional to inverse axle distance (closer axles carry more load)
+
+    inv_pos = 1 / pos
+    prop = inv_pos / inv_pos.sum()  # Proportional weights for axle loads
+
+    axle_moment_per_unit_load = np.dot(prop, pos)  # Moment arm weighted average
+
+    S = total_moment / axle_moment_per_unit_load  # total axle load
+    T = total_weight - S
+
+    axle_loads = (S * prop).tolist()
+
+    return T, axle_loads, total_weight
 
 
 # --- Computation ---
@@ -126,7 +132,8 @@ with col1:
         ax.axvline(x, color="blue", linestyle=":")
         ax.text(x, -0.4, f"Axle {i+1}\n{load:.0f} lbs", ha="center", fontsize=8)
 
-    # Legend
+    # Tongue weight marker
+    ax.plot(0, 0, "ms", label=f"Tongue Weight\n{tongue_weight:.0f} lbs")
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.65), ncol=4)
     st.pyplot(fig)
 
