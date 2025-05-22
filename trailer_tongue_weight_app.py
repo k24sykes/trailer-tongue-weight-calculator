@@ -26,28 +26,25 @@ def compute_tongue_and_axle_loads(trailer_weight, trailer_cg, axle_positions):
     n = len(x_axles)
 
     if n == 1:
-        # One axle case
-        A1 = W * x_cg / x_axles[0]
+        x1 = x_axles[0]
+        A1 = W * x_cg / x1
         T = W - A1
         return T, [A1]
 
     elif n == 2:
-        # Two axles case
-        A = np.array([
-            [1, 1],
-            [x_axles[0], x_axles[1]]
-        ])
-        b = np.array([W, W * x_cg])
-        axle_loads = np.linalg.solve(A, b)
-        T = W - axle_loads.sum()
-        return T, axle_loads.tolist()
+        x1, x2 = x_axles
+        # Calculate tongue weight assuming equal axle loads
+        T = W * (1 - 2 * x_cg / (x1 + x2))
+        A1 = A2 = (W - T) / 2
+        return T, [A1, A2]
 
 # --- Calculations ---
 tongue_weight, axle_loads = compute_tongue_and_axle_loads(trailer_weight, trailer_cg, axle_positions)
-tongue_pct = 100 * tongue_weight / trailer_weight if trailer_weight else 0
+total_weight = trailer_weight
+tongue_pct = 100 * tongue_weight / total_weight if total_weight else 0
 
 # --- Warnings ---
-if trailer_weight == 0:
+if total_weight == 0:
     st.warning("Total trailer load is zero.")
 elif tongue_pct < 10:
     st.warning(f"Tongue weight is too low: {tongue_pct:.1f}% (Recommended: 10–15%)")
@@ -66,25 +63,33 @@ with col1:
     ax.get_yaxis().set_visible(False)
     ax.set_xlabel("Distance from Hitch (in)")
 
-    # Hitch line
+    # Hitch
     ax.axvline(0, color='black', linestyle='--', label="Hitch")
 
-    # Load CG marker
+    # Trailer load CG
     ax.plot(trailer_cg, 0, "go")
     ax.text(trailer_cg, 0.2, f"{trailer_weight} lbs\nLoad CG", ha="center", fontsize=8)
 
-    # Axle lines and loads
+    # Axles
     for i, x in enumerate(axle_positions):
         ax.axvline(x, color="blue", linestyle=":")
-        ax.text(x, -0.3, f"Axle {i+1}\n{axle_loads[i]:.0f} lbs", ha="center", fontsize=8)
+        if i < len(axle_loads):
+            ax.text(x, -0.3, f"Axle {i+1}\n{axle_loads[i]:.0f} lbs", ha="center", fontsize=8)
+        else:
+            ax.text(x, -0.3, f"Axle {i+1}", ha="center", fontsize=8)
+
+    # Tongue weight marker at hitch
+    ax.plot(0, 0, "ro")
+    ax.text(0, -0.5, f"Tongue\n{tongue_weight:.0f} lbs", ha="center", fontsize=8, color='red')
 
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.5), ncol=4)
     st.pyplot(fig)
 
 with col2:
     st.subheader("Results")
-    st.metric("Total Load", f"{trailer_weight:.1f} lbs")
+    st.metric("Total Load", f"{total_weight:.1f} lbs")
     st.metric("Tongue Weight", f"{tongue_weight:.1f} lbs ({tongue_pct:.1f}%)")
-    st.markdown("### Axle Loads")
-    for i, load in enumerate(axle_loads):
-        st.write(f"Axle {i+1}: **{load:.1f} lbs**")
+    if axle_loads:
+        st.markdown("### Axle Loads")
+        for i, load in enumerate(axle_loads):
+            st.write(f"Axle {i+1}: **{load:.1f} lbs**")
