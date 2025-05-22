@@ -38,54 +38,25 @@ def compute_tongue_and_axle_loads(loads, trailer_weight, trailer_cg, axle_positi
     total_moment = sum(w * x for w, x in loads)
     n = len(axle_positions)
 
-    if n == 1:
-        a = axle_positions[0]
-        R1 = (total_moment - total_weight * 0) / a
-        T = total_weight - R1
-        axle_loads = [R1]
-        tongue_weight = T
+    A = np.zeros((2, n + 1))  # [T, R1, R2, ...]
+    b = np.zeros(2)
 
-    elif n == 2:
-        a1, a2 = axle_positions
-        A = np.array([
-            [1, 1],
-            [a1, a2]
-        ])
-        b = np.array([total_weight, total_moment])
-        try:
-            R = np.linalg.solve(A, b)
-            R1, R2 = R
-            T = total_weight - R1 - R2
-            axle_loads = [R1, R2]
-            tongue_weight = T
-        except np.linalg.LinAlgError:
-            axle_loads = [0, 0]
-            tongue_weight = total_weight
+    # Sum of vertical forces = 0
+    A[0, 0] = 1  # Tongue weight
+    A[0, 1:] = 1  # Axle reactions
+    b[0] = total_weight
 
-    elif n == 3:
-        a1, a2, a3 = axle_positions
-        W = total_weight
-        M = total_moment
+    # Sum of moments about hitch = 0
+    A[1, 1:] = axle_positions  # Moment arms for axle reactions
+    b[1] = total_moment
 
-        A = np.array([
-            [2, 1],
-            [a1 + a3, a2]
-        ])
-        b = np.array([W, M])
-        try:
-            R1_R2 = np.linalg.solve(A, b)
-            R1 = R3 = R1_R2[0]
-            R2 = R1_R2[1]
-            T = W - (R1 + R2 + R3)
-            axle_loads = [R1, R2, R3]
-            tongue_weight = T
-        except np.linalg.LinAlgError:
-            axle_loads = [0, 0, 0]
-            tongue_weight = total_weight
-
-    else:
+    try:
+        solution = np.linalg.solve(A, b)
+        tongue_weight = solution[0]
+        axle_loads = solution[1:]
+    except np.linalg.LinAlgError:
+        tongue_weight = 0
         axle_loads = [0] * n
-        tongue_weight = total_weight
 
     return tongue_weight, axle_loads, total_weight
 
