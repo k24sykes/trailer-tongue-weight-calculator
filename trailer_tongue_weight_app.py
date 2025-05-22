@@ -1,84 +1,89 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 
-st.title("Trailer Tongue Weight Calculator")
+st.set_page_config(layout="wide")
+st.title("📦 Trailer Tongue Weight Calculator")
 
-st.markdown("""
-This tool calculates the tongue weight of a trailer based on component weights and distances from the hitch.
-You can optionally include the trailer's own base weight and its center of gravity (CG) location.
-""")
+# Sidebar inputs
+st.sidebar.header("🔧 Component Setup")
 
-# Basic user inputs
-num_components = st.number_input("Number of Components (e.g., generators, batteries, toolboxes, etc.)", min_value=1, step=1)
-
+# Component inputs
+num_components = st.sidebar.number_input("Number of Components", min_value=1, step=1)
 component_weights = []
 component_distances = []
 
 for i in range(int(num_components)):
-    col1, col2 = st.columns(2)
-    with col1:
-        weight = st.number_input(f"Component {i+1} Weight (lbs)", key=f"w{i}", step=10.0, format="%.1f")
-    with col2:
-        distance = st.number_input(f"Component {i+1} Distance from Hitch (in)", key=f"d{i}", step=1.0, format="%.1f")
-    component_weights.append(weight)
-    component_distances.append(distance)
+    component_weights.append(
+        st.sidebar.number_input(f"Component {i+1} Weight (lbs)", step=10.0, format="%.1f", key=f"w{i}")
+    )
+    component_distances.append(
+        st.sidebar.number_input(f"Component {i+1} Distance from Hitch (in)", step=1.0, format="%.1f", key=f"d{i}")
+    )
 
-# Optional trailer base weight and CG location
-st.markdown("### Optional: Trailer Base Weight and CG")
-trailer_weight = st.number_input(
-    "Trailer Base Weight (lbs)",
-    min_value=0.0,
-    value=0.0,
-    step=10.0,
-    format="%.1f",
-    help="Weight of the trailer structure itself"
-)
+# Optional trailer base weight
+st.sidebar.markdown("### 🏗️ Optional: Trailer Base")
+trailer_weight = st.sidebar.number_input("Trailer Base Weight (lbs)", min_value=0.0, step=10.0, format="%.1f")
+trailer_cg = st.sidebar.number_input("Trailer CG from Hitch (in)", min_value=0.0, step=1.0, format="%.1f")
 
-trailer_cg = st.number_input(
-    "Trailer CG Distance from Hitch (in)",
-    min_value=0.0,
-    value=0.0,
-    step=1.0,
-    format="%.1f",
-    help="Location of the trailer's own center of gravity"
-)
-
-# Include trailer as an additional component if both values are non-zero
+# Add trailer as a "component" if both fields are valid
 if trailer_weight > 0 and trailer_cg > 0:
     component_weights.append(trailer_weight)
     component_distances.append(trailer_cg)
-    trailer_info = True
+    trailer_included = True
 else:
-    trailer_info = False
+    trailer_included = False
 
-# Calculate tongue weight
-total_moment = sum(w * d for w, d in zip(component_weights, component_distances))
+# Axle input
+st.sidebar.markdown("### 🚛 Axle Configuration")
+num_axles = st.sidebar.number_input("Number of Axles", min_value=1, max_value=4, step=1)
+axle_positions = []
+
+for i in range(int(num_axles)):
+    axle_pos = st.sidebar.number_input(f"Axle {i+1} Distance from Hitch (in)", step=1.0, format="%.1f", key=f"a{i}")
+    axle_positions.append(axle_pos)
+
+# Calculate total load and CG
 total_weight = sum(component_weights)
+total_moment = sum(w * d for w, d in zip(component_weights, component_distances))
 
-if total_weight > 0:
-    tongue_weight = total_moment / total_weight
-    st.success(f"Estimated Tongue Weight: **{tongue_weight:.1f} lbs**")
+# Reaction calculation (assuming all axles act as a single support point)
+if len(axle_positions) > 0:
+    avg_axle_pos = sum(axle_positions) / len(axle_positions)
+    tongue_weight = total_weight - (total_moment - total_weight * avg_axle_pos) / (0 if avg_axle_pos == 0 else avg_axle_pos)
 else:
-    st.warning("Please enter non-zero weights to calculate tongue weight.")
+    tongue_weight = 0
 
-# Plotting
-st.markdown("### Load Distribution Plot")
-fig, ax = plt.subplots(figsize=(8, 2))
-for i, (w, d) in enumerate(zip(component_weights, component_distances)):
-    label = f"Component {i+1}" if i < num_components else "Trailer Base"
-    ax.scatter(d, w, label=label)
+# Main display
+col1, col2 = st.columns([1, 2])
 
-ax.axvline(tongue_weight, color='red', linestyle='--', label='Tongue Point')
-ax.set_xlabel("Distance from Hitch (in)")
-ax.set_ylabel("Weight (lbs)")
-ax.set_title("Component Weights and CGs")
-ax.legend()
-ax.grid(True)
+with col1:
+    st.markdown("### 📊 Calculation Output")
 
-st.pyplot(fig)
+    if total_weight > 0 and len(axle_positions) > 0:
+        st.success(f"**Estimated Tongue Weight:** {tongue_weight:.1f} lbs")
+        st.markdown(f"**Total Load:** {total_weight:.1f} lbs")
+        if trailer_included:
+            st.info(f"Included trailer base: {trailer_weight:.1f} lbs @ {trailer_cg:.1f} in")
+        else:
+            st.info("Trailer base not included.")
+    else:
+        st.warning("Please input valid component weights and axle locations.")
 
-# Notes
-if trailer_info:
-    st.info(f"Trailer weight of **{trailer_weight:.1f} lbs** at **{trailer_cg:.1f} in** was included in the calculation.")
-else:
-    st.info("Trailer weight was not included (either weight or CG was zero).")
+with col2:
+    st.markdown("### 🖼️ Load Distribution")
+
+    fig, ax = plt.subplots(figsize=(10, 2))
+
+    for i, (w, d) in enumerate(zip(component_weights, component_distances)):
+        label = f"Component {i+1}" if i < num_components else "Trailer Base"
+        ax.scatter(d, w, label=label, s=100)
+
+    for i, ax_pos in enumerate(axle_positions):
+        ax.axvline(ax_pos, color='gray', linestyle='--', label=f'Axle {i+1}')
+
+    ax.axvline(x=0, color='red', linestyle='--', label='Hitch')
+    ax.set_xlabel("Distance from Hitch (in)")
+    ax.set_ylabel("Weight (lbs)")
+    ax.legend(loc='upper right')
+    ax.grid(True)
+    st.pyplot(fig)
