@@ -8,7 +8,7 @@ st.sidebar.title("Trailer Load Inputs")
 
 # --- Sidebar Inputs ---
 trailer_length = st.sidebar.number_input("Trailer Length from Hitch (in)", value=214)
-num_axles = st.sidebar.selectbox("Number of Axles", [1, 2, 3], index=1)
+num_axles = st.sidebar.selectbox("Number of Axles", [1, 2], index=1)
 
 axle_positions = []
 for i in range(num_axles):
@@ -20,43 +20,34 @@ trailer_cg = st.sidebar.number_input("Load Center of Gravity from Hitch (in)", v
 
 # --- Helper Function ---
 def compute_tongue_and_axle_loads(trailer_weight, trailer_cg, axle_positions):
-    n = len(axle_positions)
-    total_weight = trailer_weight
-    total_moment = trailer_weight * trailer_cg
+    W = trailer_weight
+    x_cg = trailer_cg
+    x_axles = axle_positions
+    n = len(x_axles)
 
     if n == 1:
-        x = axle_positions[0]
-        axle_load = total_moment / x
-        tongue_weight = total_weight - axle_load
-        return tongue_weight, [axle_load]
+        # One axle case
+        A1 = W * x_cg / x_axles[0]
+        T = W - A1
+        return T, [A1]
 
     elif n == 2:
+        # Two axles case
         A = np.array([
             [1, 1],
-            [axle_positions[0], axle_positions[1]]
+            [x_axles[0], x_axles[1]]
         ])
-        b = np.array([total_weight, total_moment])
-        try:
-            axle_loads = np.linalg.solve(A, b)
-            tongue_weight = total_weight - np.sum(axle_loads)
-            return tongue_weight, axle_loads.tolist()
-        except np.linalg.LinAlgError:
-            return 0, [0, 0]
-
-    else:  # 3 axles
-        # Only calculate tongue weight using total moment and total weight
-        avg_axle_pos = sum(axle_positions) / n
-        axle_load_est = total_moment / avg_axle_pos
-        tongue_weight = total_weight - axle_load_est
-        return tongue_weight, []
+        b = np.array([W, W * x_cg])
+        axle_loads = np.linalg.solve(A, b)
+        T = W - axle_loads.sum()
+        return T, axle_loads.tolist()
 
 # --- Calculations ---
 tongue_weight, axle_loads = compute_tongue_and_axle_loads(trailer_weight, trailer_cg, axle_positions)
-total_weight = trailer_weight
-tongue_pct = 100 * tongue_weight / total_weight if total_weight else 0
+tongue_pct = 100 * tongue_weight / trailer_weight if trailer_weight else 0
 
 # --- Warnings ---
-if total_weight == 0:
+if trailer_weight == 0:
     st.warning("Total trailer load is zero.")
 elif tongue_pct < 10:
     st.warning(f"Tongue weight is too low: {tongue_pct:.1f}% (Recommended: 10–15%)")
@@ -75,29 +66,25 @@ with col1:
     ax.get_yaxis().set_visible(False)
     ax.set_xlabel("Distance from Hitch (in)")
 
-    # Hitch
+    # Hitch line
     ax.axvline(0, color='black', linestyle='--', label="Hitch")
 
-    # Trailer load
+    # Load CG marker
     ax.plot(trailer_cg, 0, "go")
-    ax.text(trailer_cg, 0.2, f"{trailer_weight} lbs\nLoad", ha="center", fontsize=8)
+    ax.text(trailer_cg, 0.2, f"{trailer_weight} lbs\nLoad CG", ha="center", fontsize=8)
 
-    # Axles
+    # Axle lines and loads
     for i, x in enumerate(axle_positions):
         ax.axvline(x, color="blue", linestyle=":")
-        if i < len(axle_loads):
-            ax.text(x, -0.3, f"Axle {i+1}\n{axle_loads[i]:.0f} lbs", ha="center", fontsize=8)
-        else:
-            ax.text(x, -0.3, f"Axle {i+1}", ha="center", fontsize=8)
+        ax.text(x, -0.3, f"Axle {i+1}\n{axle_loads[i]:.0f} lbs", ha="center", fontsize=8)
 
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.5), ncol=4)
     st.pyplot(fig)
 
 with col2:
     st.subheader("Results")
-    st.metric("Total Load", f"{total_weight:.1f} lbs")
+    st.metric("Total Load", f"{trailer_weight:.1f} lbs")
     st.metric("Tongue Weight", f"{tongue_weight:.1f} lbs ({tongue_pct:.1f}%)")
-    if axle_loads:
-        st.markdown("### Axle Loads")
-        for i, load in enumerate(axle_loads):
-            st.write(f"Axle {i+1}: **{load:.1f} lbs**")
+    st.markdown("### Axle Loads")
+    for i, load in enumerate(axle_loads):
+        st.write(f"Axle {i+1}: **{load:.1f} lbs**")
