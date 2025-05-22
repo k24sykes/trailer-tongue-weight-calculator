@@ -36,27 +36,35 @@ def compute_tongue_and_axle_loads(loads, trailer_weight, trailer_cg, axle_positi
 
     total_weight = sum(w for w, _ in loads)
     total_moment = sum(w * x for w, x in loads)
+
     n = len(axle_positions)
 
-    A = np.zeros((2, n + 1))  # [T, R1, R2, ...]
-    b = np.zeros(2)
+    # If no axles, return zero
+    if n == 0:
+        return 0, [], total_weight
 
-    # Sum of vertical forces = 0
-    A[0, 0] = 1  # Tongue weight
-    A[0, 1:] = 1  # Axle reactions
-    b[0] = total_weight
-
-    # Sum of moments about hitch = 0
-    A[1, 1:] = axle_positions  # Moment arms for axle reactions
-    b[1] = total_moment
-
-    try:
-        solution = np.linalg.solve(A, b)
-        tongue_weight = solution[0]
-        axle_loads = solution[1:]
-    except np.linalg.LinAlgError:
+    # For 1 axle
+    if n == 1:
+        axle_loads = [total_weight]
         tongue_weight = 0
-        axle_loads = [0] * n
+        return tongue_weight, axle_loads, total_weight
+
+    # For 2 axles, solve the linear system:
+    if n == 2:
+        A = np.array([
+            [1, 1],  # Sum of axle loads = total_weight - tongue_weight
+            [axle_positions[0], axle_positions[1]]  # Moment equilibrium about hitch
+        ])
+        b = np.array([total_weight, total_moment])
+        axle_loads = np.linalg.solve(A, b)
+        tongue_weight = 0
+        return tongue_weight, axle_loads.tolist(), total_weight
+
+    # For 3 axles, system is underdetermined with 1 moment eqn and 3 unknowns.
+    # We assume equal axle loads and calculate tongue weight accordingly.
+    axle_load_share = total_moment / sum(axle_positions)
+    axle_loads = [axle_load_share] * 3
+    tongue_weight = total_weight - sum(axle_loads)
 
     return tongue_weight, axle_loads, total_weight
 
