@@ -25,27 +25,26 @@ for i in range(num_loads):
     position = st.sidebar.number_input(f"Load {i+1} Position from Hitch (in)", value=100, key=f"p{i}")
     loads.append((weight, position))
 
-# --- Helper Functions ---
+# --- Helper Function ---
 def compute_tongue_and_axle_loads(loads, trailer_weight, trailer_cg, axle_positions):
-    # Add trailer as a load if weight is specified
+    # Add trailer body as a load
     if trailer_weight > 0:
         loads.append((trailer_weight, trailer_cg))
 
     total_weight = sum(w for w, _ in loads)
-    total_moment = sum(w * x for w, x in loads)
 
-    # Moment balance about the hitch to find tongue weight
-    tongue_weight = total_moment / trailer_length
+    # Use average of axle positions as balance point
+    axle_center = sum(axle_positions) / len(axle_positions)
 
-    # Distribute the rest of the load to axles based on position and moment balance
-    axle_loads = []
-    axle_moments = [abs(x - trailer_length / 2) for x in axle_positions]
-    total_moment_arm = sum(1 / (m + 1e-6) for m in axle_moments)  # Prevent div by zero
+    # Calculate total moment about axle center
+    total_moment = sum(w * (x - axle_center) for w, x in loads)
 
-    distributed_weight = total_weight - tongue_weight
-    for m in axle_moments:
-        load_share = (1 / (m + 1e-6)) / total_moment_arm
-        axle_loads.append(distributed_weight * load_share)
+    # Solve for tongue weight using moment balance
+    tongue_weight = -total_moment / axle_center
+
+    # Remaining weight goes equally to axles
+    axle_total_load = total_weight - tongue_weight
+    axle_loads = [axle_total_load / len(axle_positions)] * len(axle_positions)
 
     return tongue_weight, axle_loads, total_weight
 
