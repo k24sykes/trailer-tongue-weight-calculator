@@ -18,7 +18,7 @@ st.sidebar.header("🔧 Input Parameters")
 
 trailer_length = st.sidebar.number_input("Trailer Length (in)", value=214)
 
-num_axles = st.sidebar.selectbox("Number of Axles", [1, 2], index=1)
+num_axles = st.sidebar.selectbox("Number of Axles", [1, 2, 3], index=1)
 axle_positions = [st.sidebar.number_input(f"Axle {i+1} Position from Hitch (in)", value=134 + i*36) for i in range(num_axles)]
 axle_avg = sum(axle_positions) / len(axle_positions)
 
