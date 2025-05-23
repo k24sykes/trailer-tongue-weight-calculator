@@ -9,12 +9,11 @@ import os
 st.set_page_config(layout="wide", page_title="Trailer Tongue Weight Calculator")
 st.title("🎯 Trailer Tongue Weight Calculator")
 st.markdown("""
-This app calculates the tongue weight of a trailer using static equilibrium. 
-The tongue weight is the downward force the trailer applies to the hitch.  
-Assumptions:
-- The axles are modeled as a single virtual axle at their average position.
-- All forces are vertical and the system is in static equilibrium.
-- Positive tongue weight means downward force on the hitch (desirable).
+This app calculates the tongue weight of a trailer using static equilibrium.  
+**Assumptions:**
+- All axles are treated as one virtual axle at the average position.
+- Loads are treated as point forces acting at their CG locations.
+- Positive tongue weight indicates downward force on the hitch (this is desirable).
 """)
 
 # --- User Inputs ---
@@ -73,7 +72,8 @@ for i, (w, cg) in enumerate(loads):
     ax.plot(cg, 0, "go")
     ax.text(cg, 0.2, f"{w} lbs\nLoad {i+1}", ha="center", fontsize=8)
 
-ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.5), ncol=3)
+# Move legend below plot
+ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=3, frameon=False)
 st.pyplot(fig)
 
 # --- Results Display ---
@@ -88,8 +88,8 @@ if st.button("📄 Export Results to PDF"):
         image_path = os.path.join(tmpdir, "plot.png")
         pdf_path = os.path.join(tmpdir, "tongue_weight_report.pdf")
 
-        # Save plot
-        fig.savefig(image_path, bbox_inches='tight')
+        # Save plot properly in binary mode
+        fig.savefig(image_path, bbox_inches='tight', dpi=300, format='png')
 
         # Generate PDF
         pdf = FPDF()
@@ -102,7 +102,9 @@ if st.button("📄 Export Results to PDF"):
         pdf.cell(200, 10, txt=f"Virtual Axle Position: {axle_avg:.1f} in", ln=True)
         pdf.cell(200, 10, txt="Assumptions:", ln=True)
         pdf.set_font("Arial", size=10)
-        pdf.multi_cell(0, 10, "- All axles treated as a single point load at average position.\n- Loads treated as point forces at CGs.\n- Positive tongue weight indicates downward force at hitch.")
+        pdf.multi_cell(0, 10, "- All axles treated as a single point load at average position.\n"
+                              "- Loads treated as point forces at CGs.\n"
+                              "- Positive tongue weight indicates downward force at hitch.")
         pdf.image(image_path, x=10, y=None, w=180)
         pdf.output(pdf_path)
 
