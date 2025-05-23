@@ -42,11 +42,11 @@ if trailer_weight > 0:
 # Calculations
 total_weight = sum(w for w, _ in loads)
 total_moment = sum(w * cg for w, cg in loads)
-tongue_force = (total_moment - total_weight * axle_avg) / axle_avg
-tongue_force = round(tongue_force, 2)
 
-# Convention: Positive = Downward on hitch
-tongue_force_display = abs(tongue_force) if tongue_force > 0 else -abs(tongue_force)
+# Corrected Sign Convention: Positive = Downward
+raw_tongue_force = (total_moment - total_weight * axle_avg) / axle_avg
+tongue_force_display = round(-raw_tongue_force, 2)  # Reverse the sign
+
 tongue_pct = 100 * tongue_force_display / total_weight if total_weight else 0
 
 # Results
