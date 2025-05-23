@@ -43,9 +43,9 @@ if trailer_weight > 0:
 total_weight = sum(w for w, _ in loads)
 total_moment = sum(w * cg for w, cg in loads)
 
-# Corrected Sign Convention: Positive = Downward
+# Tongue force (positive = downward)
 raw_tongue_force = (total_moment - total_weight * axle_avg) / axle_avg
-tongue_force_display = round(-raw_tongue_force, 2)  # Reverse the sign
+tongue_force_display = round(-raw_tongue_force, 2)  # Negate to show downward as positive
 
 tongue_pct = 100 * tongue_force_display / total_weight if total_weight else 0
 
@@ -68,21 +68,30 @@ with col2:
 # Plot
 fig, ax = plt.subplots(figsize=(10, 3))
 ax.set_xlim(0, trailer_length)
-ax.set_ylim(-1, 1)
+ax.set_ylim(-1.5, 1.5)
 ax.get_yaxis().set_visible(False)
 ax.set_xlabel("Distance from Hitch (in)")
 
-# Plot elements
-ax.axvline(0, color='black', linestyle='--', label="Hitch")
-ax.axvline(axle_avg, color='blue', linestyle=':', label="Virtual Axle")
-ax.text(axle_avg, -0.3, f"Axle\n({axle_avg:.1f} in)", ha="center", fontsize=8)
+# Plot hitch (red dot)
+ax.plot(0, 0, "ro", label=f"Hitch\n{tongue_force_display:.0f} lbs")
+ax.text(0, -0.35, "Hitch\n(0 in)", ha="center", fontsize=8)
 
+# Plot real axles
+for i, pos in enumerate(axle_positions):
+    ax.axvline(pos, color='gray', linestyle='--', label=f"Axle {i+1} ({pos:.0f} in)")
+    ax.text(pos, -0.35, f"Axle {i+1}", ha="center", fontsize=8)
+
+# Plot virtual axle (avg)
+ax.axvline(axle_avg, color='blue', linestyle=':', label=f"Virtual Axle ({axle_avg:.1f} in)")
+ax.text(axle_avg, -0.65, f"Virtual\nAxle", ha="center", fontsize=8)
+
+# Plot loads
 for i, (w, cg) in enumerate(loads):
     ax.plot(cg, 0, "go")
-    ax.text(cg, 0.2, f"{w:.0f} lbs\nLoad {i+1}", ha="center", fontsize=8)
+    ax.text(cg, 0.25, f"Load {i+1}\n{w:.0f} lbs", ha="center", fontsize=8)
 
-# Legend position adjusted below plot
-ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=3, frameon=False)
+# Legend: placed beside plot to reduce clutter
+ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
 st.pyplot(fig)
 
 # PDF Export
